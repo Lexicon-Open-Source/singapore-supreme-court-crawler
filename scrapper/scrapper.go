@@ -144,7 +144,7 @@ func crawlNewTemplate(e *colly.HTMLElement) models.Extraction {
 	splittedTitle := strings.Split(title, " v ")
 
 	for _, part := range splittedTitle {
-		if strings.Contains(part, "Public Prosecutor") || strings.Contains(part, "Public prosecutor") || strings.Contains(part, "public prosecutor") {
+		if strings.Contains(strings.ToLower(part), "public prosecutor") {
 			continue
 		}
 
@@ -263,7 +263,7 @@ func crawlOldTemplate(e *colly.HTMLElement) models.Extraction {
 				extractedParties := strings.Split(value, "—")
 				var defendant string
 				for _, party := range extractedParties {
-					if strings.Contains(party, "Public Prosecutor") || strings.Contains(party, "Public prosecutor") || strings.Contains(party, "public prosecutor") {
+					if strings.Contains(strings.ToLower(party), "public prosecutor") {
 						continue
 					}
 					defendant = strings.TrimSpace(party)
@@ -323,7 +323,7 @@ func crawlOldTemplate(e *colly.HTMLElement) models.Extraction {
 			},
 		},
 	)
-	e.ForEachWithBreak("p", func(i int, f *colly.HTMLElement) bool {
+	e.ForEachWithBreak("#divJudgement > div > p", func(i int, f *colly.HTMLElement) bool {
 		if f.Attr("class") == "Footnote" {
 			return false
 		}

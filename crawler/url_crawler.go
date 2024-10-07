@@ -154,7 +154,7 @@ func crawlUrl(url string) []models.CrawlerResult {
 				return
 			}
 			stringDate := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(f.ChildText("a.decision-date-link"), "Decision Date:", ""), "|", ""))
-			decisionDate := carbon.ParseByFormat(stringDate, "d M Y").ToDateTimeStruct()
+			decisionDate := carbon.ParseByFormat(stringDate, "j M Y").ToDateTimeStruct()
 			detailUrls = append(detailUrls, models.CrawlerResult{
 				Url: fmt.Sprintf("https://%s%s", common.CRAWLER_DOMAIN, link),
 				Metadata: models.CrawlerMetadata{
