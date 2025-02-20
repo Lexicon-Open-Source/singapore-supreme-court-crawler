@@ -4,57 +4,170 @@ import (
 	"context"
 	"lexicon/singapore-supreme-court-crawler/common"
 	"lexicon/singapore-supreme-court-crawler/crawler/models"
+	"lexicon/singapore-supreme-court-crawler/repository"
+	"time"
+
+	"github.com/rs/zerolog/log"
+	"github.com/samber/lo"
 )
 
-func UpsertUrl(urlFrontier []models.UrlFrontier) error {
+func UpsertUrl(ctx context.Context, urlFrontier []repository.UrlFrontier) error {
 
-	ctx := context.Background()
 	tx, err := common.Pool.Begin(ctx)
 
 	if err != nil {
 		return err
 	}
 
-	err = models.UpsertUrlFrontier(ctx, tx, urlFrontier)
-	if err != nil {
-		return err
-	}
-	tx.Commit(ctx)
+	defer tx.Rollback(ctx)
 
-	return nil
+	queries := common.Queries.WithTx(tx)
+
+	toModel := lo.Map(urlFrontier, func(url repository.UrlFrontier, _ int) repository.UpsertUrlFrontiersParams {
+		return repository.UpsertUrlFrontiersParams{
+			ID:        url.ID,
+			Domain:    url.Domain,
+			Url:       url.Url,
+			Crawler:   url.Crawler,
+			Status:    int16(url.Status),
+			Metadata:  url.Metadata,
+			CreatedAt: url.CreatedAt,
+			UpdatedAt: url.UpdatedAt,
+		}
+	})
+
+	res := queries.UpsertUrlFrontiers(ctx, toModel)
+	res.Exec(func(i int, err error) {
+		if err != nil {
+
+			log.Err(err).Msg("failed to upsert url frontier")
+			return
+		}
+	})
+
+	return tx.Commit(ctx)
 }
 
-func UpdateUrlFrontierStatus(frontier string, status uint8) error {
-
-	ctx := context.Background()
+func UpdateFrontierStatuses(ctx context.Context, frontiers []repository.UrlFrontier) error {
 	tx, err := common.Pool.Begin(ctx)
 	if err != nil {
+		log.Err(err).Msg("failed to begin transaction")
+
 		return err
 	}
+	defer tx.Rollback(ctx)
 
-	err = models.UpdateUrlFrontierStatus(ctx, tx, frontier, status)
-	if err != nil {
-		return err
-	}
-	tx.Commit(ctx)
+	queries := common.Queries.WithTx(tx)
 
-	return nil
+	params := lo.Map(frontiers, func(f repository.UrlFrontier, _ int) repository.UpdateUrlFrontierStatusParams {
+		return repository.UpdateUrlFrontierStatusParams{
+			ID:        f.ID,
+			Status:    models.URL_FRONTIER_STATUS_CRAWLED,
+			UpdatedAt: time.Now(),
+		}
+	})
+	res := queries.UpdateUrlFrontierStatus(
+		ctx,
+		params,
+	)
+	res.Exec(func(i int, err error) {
+		if err != nil {
+
+			log.Err(err).Msg("failed to upsert url frontier")
+			return
+		}
+	})
+
+	return tx.Commit(ctx)
 }
 
-func GetUnscrapedUrlFrontier() ([]models.UrlFrontier, error) {
-
-	ctx := context.Background()
+func GetUrlFrontierByUrl(ctx context.Context, url string) (repository.UrlFrontier, error) {
 	tx, err := common.Pool.Begin(ctx)
 	if err != nil {
+		log.Err(err).Msg("failed to begin transaction")
+
+		return repository.UrlFrontier{}, err
+	}
+
+	queries := common.Queries.WithTx(tx)
+
+	urlFrontier, err := queries.GetUrlFrontierByUrl(ctx, url)
+	if err != nil {
+		log.Err(err).Msg("failed to get url frontier by url")
+		return repository.UrlFrontier{}, err
+	}
+
+	return repository.UrlFrontier{
+		ID:        urlFrontier.ID,
+		Domain:    urlFrontier.Domain,
+		Url:       urlFrontier.Url,
+		Crawler:   urlFrontier.Crawler,
+		Status:    urlFrontier.Status,
+		Metadata:  urlFrontier.Metadata,
+		CreatedAt: urlFrontier.CreatedAt,
+		UpdatedAt: urlFrontier.UpdatedAt,
+	}, nil
+}
+
+func GetUrlFrontierById(ctx context.Context, id string) (repository.UrlFrontier, error) {
+	tx, err := common.Pool.Begin(ctx)
+	if err != nil {
+		log.Err(err).Msg("failed to begin transaction")
+
+		return repository.UrlFrontier{}, err
+	}
+
+	queries := common.Queries.WithTx(tx)
+
+	urlFrontier, err := queries.GetUrlFrontierById(ctx, id)
+	if err != nil {
+		log.Err(err).Msg("failed to get url frontier by id")
+		return repository.UrlFrontier{}, err
+	}
+
+	return repository.UrlFrontier{
+		ID:        urlFrontier.ID,
+		Domain:    urlFrontier.Domain,
+		Url:       urlFrontier.Url,
+		Crawler:   urlFrontier.Crawler,
+		Status:    urlFrontier.Status,
+		Metadata:  urlFrontier.Metadata,
+		CreatedAt: urlFrontier.CreatedAt,
+		UpdatedAt: urlFrontier.UpdatedAt,
+	}, nil
+}
+
+func GetUnscrappedUrlFrontiers(ctx context.Context, limit int32) ([]repository.UrlFrontier, error) {
+	tx, err := common.Pool.Begin(ctx)
+	if err != nil {
+		log.Err(err).Msg("failed to begin transaction")
+
+		return nil, err
+	}
+	queries := common.Queries.WithTx(tx)
+
+	urlFrontiers, err := queries.GetUnscrappedUrlFrontiers(ctx, repository.GetUnscrappedUrlFrontiersParams{
+		Crawler: common.CRAWLER_NAME,
+		Status:  models.URL_FRONTIER_STATUS_NEW,
+		Limit:   limit,
+	})
+	if err != nil {
+		log.Err(err).Msg("failed to get unscrapped url frontiers")
 		return nil, err
 	}
 
-	list, err := models.GetUnScrapedUrlFrontier(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
+	res := lo.Map(urlFrontiers, func(u repository.GetUnscrappedUrlFrontiersRow, _ int) repository.UrlFrontier {
+		return repository.UrlFrontier{
+			ID:        u.ID,
+			Domain:    u.Domain,
+			Url:       u.Url,
+			Crawler:   u.Crawler,
+			Status:    u.Status,
+			Metadata:  u.Metadata,
+			CreatedAt: u.CreatedAt,
+			UpdatedAt: u.UpdatedAt,
+		}
+	})
 
-	tx.Commit(ctx)
-	return list, nil
-
+	return res, nil
 }

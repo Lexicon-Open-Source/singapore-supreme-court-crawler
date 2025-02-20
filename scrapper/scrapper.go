@@ -1,11 +1,11 @@
 package scrapper
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"lexicon/singapore-supreme-court-crawler/common"
-	crawler_model "lexicon/singapore-supreme-court-crawler/crawler/models"
 	crawler_service "lexicon/singapore-supreme-court-crawler/crawler/services"
 	"lexicon/singapore-supreme-court-crawler/scrapper/models"
 	"lexicon/singapore-supreme-court-crawler/scrapper/services"
@@ -26,7 +26,7 @@ import (
 
 func StartScraper() {
 	// Fetch unscrapped url frontier from db
-	list, err := crawler_service.GetUnscrapedUrlFrontier()
+	list, err := crawler_service.GetUnscrappedUrlFrontiers(context.Background(), 100)
 	if err != nil {
 		log.Error().Err(err).Msg("Error fetching unscrapped url frontier")
 	}
@@ -116,10 +116,10 @@ func buildScrapper() (*colly.Collector, error) {
 			log.Error().Err(err).Msg("Error upserting extraction")
 		}
 		log.Info().Msg("Updating url frontier status: " + newExtraction.UrlFrontierId)
-		err = crawler_service.UpdateUrlFrontierStatus(newExtraction.UrlFrontierId, crawler_model.URL_FRONTIER_STATUS_CRAWLED)
-		if err != nil {
-			log.Error().Err(err).Msg("Error updating url frontier status")
-		}
+		// err = crawler_service.UpdateUrlFrontierStatus(newExtraction.UrlFrontierId, crawler_model.URL_FRONTIER_STATUS_CRAWLED)
+		// if err != nil {
+		// 	log.Error().Err(err).Msg("Error updating url frontier status")
+		// }
 
 		log.Info().Msg("Scraped: " + r.Request.URL.String())
 	})
