@@ -2,9 +2,9 @@ package crawler
 
 import (
 	"strings"
+	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/golang-module/carbon/v2"
 	"github.com/rs/zerolog/log"
 )
 
@@ -50,8 +50,12 @@ func getCitationNumber(e *rod.Element) (string, error) {
 
 func getDecisionDate(e *rod.Element) (string, error) {
 	stringDate := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(e.MustElement("a.decision-date-link").MustText(), "Decision Date:", ""), "|", ""))
-	decisionDate := carbon.ParseByFormat(stringDate, "j M Y").ToDateTimeStruct()
-	return decisionDate.ToIso8601String(), nil
+	decisionDate, err := time.Parse("2 Jan 2006", stringDate)
+	if err != nil {
+		log.Error().Err(err).Msg("Error parsing decision date")
+		return "", err
+	}
+	return decisionDate.Format(time.RFC3339), nil
 }
 
 func getCategories(e *rod.Element) ([]string, error) {

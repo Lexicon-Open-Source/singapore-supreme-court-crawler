@@ -240,11 +240,11 @@ func (c *CrawlerImpl) CrawlAll(ctx context.Context) error {
 			}(url)
 		}
 
-		wg.Wait()
+		go func() {
+			wg.Wait()
+			close(errChan)
+		}()
 	}
-
-	// Close error channel
-	close(errChan)
 
 	// Collect any errors that occurred
 	for err := range errChan {

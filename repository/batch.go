@@ -75,17 +75,18 @@ func (b *UpdateUrlFrontierStatusBatchResults) Close() error {
 }
 
 const upsertExtraction = `-- name: UpsertExtraction :batchexec
-INSERT INTO extractions (id, url_frontier_id, site_content, raw_page_link, language, page_hash, metadata, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO extractions (id, url_frontier_id, site_content, artifact_link, raw_page_link, language, page_hash, metadata, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (id) DO UPDATE
 SET
   url_frontier_id = $2,
   site_content = $3,
-  raw_page_link = $4,
-  language = $5,
-  page_hash = $6,
-  metadata = $7,
-  updated_at = $8
+  artifact_link = $4,
+  raw_page_link = $5,
+  language = $6,
+  page_hash = $7,
+  metadata = $8,
+  updated_at = $9
 `
 
 type UpsertExtractionBatchResults struct {
@@ -98,6 +99,7 @@ type UpsertExtractionParams struct {
 	ID            string
 	UrlFrontierID string
 	SiteContent   *string
+	ArtifactLink  *string
 	RawPageLink   *string
 	Language      string
 	PageHash      *string
@@ -113,6 +115,7 @@ func (q *Queries) UpsertExtraction(ctx context.Context, arg []UpsertExtractionPa
 			a.ID,
 			a.UrlFrontierID,
 			a.SiteContent,
+			a.ArtifactLink,
 			a.RawPageLink,
 			a.Language,
 			a.PageHash,

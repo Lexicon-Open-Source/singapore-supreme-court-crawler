@@ -48,32 +48,27 @@ func UpsertUrl(ctx context.Context, urlFrontier []repository.UrlFrontier) error 
 	return tx.Commit(ctx)
 }
 
-func UpdateFrontierStatuses(ctx context.Context, frontiers []repository.UrlFrontier) error {
+func UpdateFrontierStatuses(ctx context.Context, statuses []lo.Tuple2[string, int16]) error {
 	tx, err := common.Pool.Begin(ctx)
 	if err != nil {
 		log.Err(err).Msg("failed to begin transaction")
-
 		return err
 	}
 	defer tx.Rollback(ctx)
 
 	queries := common.Queries.WithTx(tx)
 
-	params := lo.Map(frontiers, func(f repository.UrlFrontier, _ int) repository.UpdateUrlFrontierStatusParams {
+	res := queries.UpdateUrlFrontierStatus(ctx, lo.Map(statuses, func(status lo.Tuple2[string, int16], _ int) repository.UpdateUrlFrontierStatusParams {
 		return repository.UpdateUrlFrontierStatusParams{
-			ID:        f.ID,
-			Status:    models.URL_FRONTIER_STATUS_CRAWLED,
+			ID:        status.A,
+			Status:    status.B,
 			UpdatedAt: time.Now(),
 		}
-	})
-	res := queries.UpdateUrlFrontierStatus(
-		ctx,
-		params,
-	)
+	}))
+
 	res.Exec(func(i int, err error) {
 		if err != nil {
-
-			log.Err(err).Msg("failed to upsert url frontier")
+			log.Err(err).Msg("failed to update url frontier status")
 			return
 		}
 	})

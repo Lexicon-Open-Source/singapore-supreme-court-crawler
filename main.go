@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"lexicon/singapore-supreme-court-crawler/common"
-	"lexicon/singapore-supreme-court-crawler/crawler"
+	"lexicon/singapore-supreme-court-crawler/scrapper"
 
 	"github.com/golang-module/carbon/v2"
 
@@ -59,9 +59,12 @@ func main() {
 
 	}
 
-	crawler := crawler.CrawlerImpl{}
-	crawler.Setup()
+	// crawler := crawler.CrawlerImpl{}
+	// crawler.Setup()
 
-	crawler.CrawlAll(ctx)
+	// crawler.CrawlAll(ctx)
 
+	scrapper := scrapper.ScrapperImpl{}
+	scrapper.Setup()
+	scrapper.ScrapeAll(ctx)
 }
