@@ -21,7 +21,7 @@ func UpsertUrl(ctx context.Context, urlFrontier []repository.UrlFrontier) error 
 
 	defer tx.Rollback(ctx)
 
-	queries := common.Queries.WithTx(tx)
+	queries := common.Query.WithTx(tx)
 
 	toModel := lo.Map(urlFrontier, func(url repository.UrlFrontier, _ int) repository.UpsertUrlFrontiersParams {
 		return repository.UpsertUrlFrontiersParams{
@@ -56,7 +56,7 @@ func UpdateFrontierStatuses(ctx context.Context, statuses []lo.Tuple2[string, in
 	}
 	defer tx.Rollback(ctx)
 
-	queries := common.Queries.WithTx(tx)
+	queries := common.Query.WithTx(tx)
 
 	res := queries.UpdateUrlFrontierStatus(ctx, lo.Map(statuses, func(status lo.Tuple2[string, int16], _ int) repository.UpdateUrlFrontierStatusParams {
 		return repository.UpdateUrlFrontierStatusParams{
@@ -84,7 +84,7 @@ func GetUrlFrontierByUrl(ctx context.Context, url string) (repository.UrlFrontie
 		return repository.UrlFrontier{}, err
 	}
 
-	queries := common.Queries.WithTx(tx)
+	queries := common.Query.WithTx(tx)
 
 	urlFrontier, err := queries.GetUrlFrontierByUrl(ctx, url)
 	if err != nil {
@@ -103,7 +103,7 @@ func GetUrlFrontierById(ctx context.Context, id string) (repository.UrlFrontier,
 		return repository.UrlFrontier{}, err
 	}
 
-	queries := common.Queries.WithTx(tx)
+	queries := common.Query.WithTx(tx)
 
 	urlFrontier, err := queries.GetUrlFrontierById(ctx, id)
 	if err != nil {
@@ -121,7 +121,7 @@ func GetUnscrappedUrlFrontiers(ctx context.Context, limit int32) ([]repository.U
 
 		return nil, err
 	}
-	queries := common.Queries.WithTx(tx)
+	queries := common.Query.WithTx(tx)
 
 	urlFrontiers, err := queries.GetUnscrappedUrlFrontiers(ctx, repository.GetUnscrappedUrlFrontiersParams{
 		Crawler: common.CRAWLER_NAME,

@@ -11,7 +11,7 @@ import (
 var (
 	Pool          *pgxpool.Pool
 	StorageClient *storage.Client
-	Queries       *repository.Queries
+	Query         *repository.Queries
 )
 
 func SetDatabase(newPool *pgxpool.Pool) error {
@@ -35,6 +35,6 @@ func SetQueries(newQueries *repository.Queries) error {
 	if newQueries == nil {
 		return errors.New("cannot assign nil queries")
 	}
-	Queries = newQueries
+	Query = newQueries
 	return nil
 }

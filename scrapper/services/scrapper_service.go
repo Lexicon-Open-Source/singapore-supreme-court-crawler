@@ -15,7 +15,7 @@ func UpsertExtraction(ctx context.Context, extractions []repository.Extraction) 
 		return err
 	}
 
-	queries := common.Queries.WithTx(tx)
+	queries := common.Query.WithTx(tx)
 
 	br := queries.UpsertExtraction(ctx, lo.Map(extractions, func(extraction repository.Extraction, _ int) repository.UpsertExtractionParams {
 		return repository.UpsertExtractionParams{
