@@ -2,7 +2,7 @@ version: "2"
 sql:
   - engine: "postgresql"
     queries: "query.sql"
-    schema: "../lexicon-beneficial-ownership-database-migration/lexicon-bo-crawler/"
+    schema: "../lexicon-beneficial-ownership-database-migration/lexicon-bo-crawler-v2/"
     gen:
       go:
         package: "repository"

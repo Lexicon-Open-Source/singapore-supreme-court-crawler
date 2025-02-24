@@ -27,26 +27,15 @@ type GetUnscrappedUrlFrontiersParams struct {
 	Limit   int32
 }
 
-type GetUnscrappedUrlFrontiersRow struct {
-	ID        string
-	Domain    string
-	Url       string
-	Crawler   string
-	Status    int16
-	Metadata  crawlerModel.UrlFrontierMetadata
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
-func (q *Queries) GetUnscrappedUrlFrontiers(ctx context.Context, arg GetUnscrappedUrlFrontiersParams) ([]GetUnscrappedUrlFrontiersRow, error) {
+func (q *Queries) GetUnscrappedUrlFrontiers(ctx context.Context, arg GetUnscrappedUrlFrontiersParams) ([]UrlFrontier, error) {
 	rows, err := q.db.Query(ctx, getUnscrappedUrlFrontiers, arg.Crawler, arg.Status, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetUnscrappedUrlFrontiersRow
+	var items []UrlFrontier
 	for rows.Next() {
-		var i GetUnscrappedUrlFrontiersRow
+		var i UrlFrontier
 		if err := rows.Scan(
 			&i.ID,
 			&i.Domain,
@@ -74,20 +63,9 @@ WHERE id = $1
 LIMIT 1
 `
 
-type GetUrlFrontierByIdRow struct {
-	ID        string
-	Domain    string
-	Url       string
-	Crawler   string
-	Status    int16
-	Metadata  crawlerModel.UrlFrontierMetadata
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
-func (q *Queries) GetUrlFrontierById(ctx context.Context, id string) (GetUrlFrontierByIdRow, error) {
+func (q *Queries) GetUrlFrontierById(ctx context.Context, id string) (UrlFrontier, error) {
 	row := q.db.QueryRow(ctx, getUrlFrontierById, id)
-	var i GetUrlFrontierByIdRow
+	var i UrlFrontier
 	err := row.Scan(
 		&i.ID,
 		&i.Domain,
@@ -108,20 +86,9 @@ WHERE url = $1
 LIMIT 1
 `
 
-type GetUrlFrontierByUrlRow struct {
-	ID        string
-	Domain    string
-	Url       string
-	Crawler   string
-	Status    int16
-	Metadata  crawlerModel.UrlFrontierMetadata
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
-func (q *Queries) GetUrlFrontierByUrl(ctx context.Context, url string) (GetUrlFrontierByUrlRow, error) {
+func (q *Queries) GetUrlFrontierByUrl(ctx context.Context, url string) (UrlFrontier, error) {
 	row := q.db.QueryRow(ctx, getUrlFrontierByUrl, url)
-	var i GetUrlFrontierByUrlRow
+	var i UrlFrontier
 	err := row.Scan(
 		&i.ID,
 		&i.Domain,

@@ -17,11 +17,11 @@ type Extraction struct {
 	SiteContent   *string
 	ArtifactLink  *string
 	RawPageLink   *string
+	Metadata      scrapperModel.Metadata
+	Language      string
+	PageHash      *string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
-	Language      string
-	Metadata      scrapperModel.Metadata
-	PageHash      *string
 }
 
 type UrlFrontier struct {
@@ -31,7 +31,7 @@ type UrlFrontier struct {
 	Crawler string
 	// 0: Pending, 1: Crawled, 2: Changed
 	Status    int16
+	Metadata  crawlerModel.UrlFrontierMetadata
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	Metadata  crawlerModel.UrlFrontierMetadata
 }

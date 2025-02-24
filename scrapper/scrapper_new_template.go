@@ -2,9 +2,10 @@ package scrapper
 
 import (
 	"context"
-	"lexicon/singapore-supreme-court-crawler/repository"
 	"strings"
 	"time"
+
+	"lexicon/singapore-supreme-court-crawler/repository"
 
 	md "github.com/JohannesKaufmann/html-to-markdown"
 	mdp "github.com/JohannesKaufmann/html-to-markdown/plugin"
@@ -14,7 +15,6 @@ import (
 )
 
 func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *repository.Extraction, urlFrontier *repository.UrlFrontier) error {
-
 	log.Info().Msgf("Scraping new template for url: %s", urlFrontier.Url)
 
 	extraction.Metadata.CitationNumber = urlFrontier.Metadata.CitationNumber
@@ -25,7 +25,7 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 		log.Error().Err(err).Msg("Error parsing year")
 		return err
 	}
-	extraction.Metadata.Year = year.Format(time.RFC3339)
+	extraction.Metadata.Year = year.Format("2006")
 	extraction.Metadata.DecisionDate = urlFrontier.Metadata.DecisionDate
 	extraction.Metadata.Title = urlFrontier.Metadata.Title
 	splittedTitle := strings.Split(extraction.Metadata.Title, " v ")
@@ -69,7 +69,6 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 		md.Rule{
 			Filter: []string{"p.Judg-Author"},
 			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
 				content = strings.TrimSpace(content)
 				return md.String("** " + content)
 			},
@@ -77,7 +76,6 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 		md.Rule{
 			Filter: []string{"p.Judg-Heading-1"},
 			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
 				content = strings.TrimSpace(content)
 				return md.String("# " + content)
 			},
@@ -85,7 +83,6 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 		md.Rule{
 			Filter: []string{"p.Judg-Heading-2"},
 			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
 				content = strings.TrimSpace(content)
 				return md.String("## " + content)
 			},
@@ -93,7 +90,6 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 		md.Rule{
 			Filter: []string{"p.Judg-1", "p.Judg-2", "p.Judg-List-1-Item", "p.Judg-List-2-Item"},
 			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
 				content = strings.TrimSpace(content)
 				return md.String(content)
 			},
@@ -102,7 +98,6 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 		md.Rule{
 			Filter: []string{"p.Judge-Quote-1"},
 			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
 				content = strings.TrimSpace(content)
 				return md.String("> " + content)
 			},
@@ -110,7 +105,6 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 		md.Rule{
 			Filter: []string{"p.Judge-Quote-2"},
 			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
 				content = strings.TrimSpace(content)
 				return md.String(">> " + content)
 			},
@@ -118,7 +112,6 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 		md.Rule{
 			Filter: []string{"p.Judg-QuoteList-2"},
 			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
 				content = strings.TrimSpace(content)
 				return md.String("- " + content)
 			},
@@ -126,7 +119,6 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 		md.Rule{
 			Filter: []string{"p.Judg-QuoteList-3"},
 			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
 				content = strings.TrimSpace(content)
 				return md.String("  - " + content)
 			},
@@ -134,16 +126,13 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 		md.Rule{
 			Filter: []string{"p.Footnote"},
 			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
 				content = strings.TrimSpace(content)
 				return md.String("^" + content)
-
 			},
 		},
 		md.Rule{
 			Filter: []string{"p.Judg-List-1-No"},
 			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
 				content = strings.TrimSpace(content)
 				return md.String("1. " + content)
 			},
@@ -151,7 +140,6 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 		md.Rule{
 			Filter: []string{"p.Judg-List-2-No"},
 			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
 				content = strings.TrimSpace(content)
 				return md.String("a. " + content)
 			},
@@ -186,5 +174,4 @@ func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *reposito
 	log.Info().Msgf("Scraped new template for url: %s", urlFrontier.Url)
 
 	return nil
-
 }

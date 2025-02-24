@@ -92,16 +92,7 @@ func GetUrlFrontierByUrl(ctx context.Context, url string) (repository.UrlFrontie
 		return repository.UrlFrontier{}, err
 	}
 
-	return repository.UrlFrontier{
-		ID:        urlFrontier.ID,
-		Domain:    urlFrontier.Domain,
-		Url:       urlFrontier.Url,
-		Crawler:   urlFrontier.Crawler,
-		Status:    urlFrontier.Status,
-		Metadata:  urlFrontier.Metadata,
-		CreatedAt: urlFrontier.CreatedAt,
-		UpdatedAt: urlFrontier.UpdatedAt,
-	}, nil
+	return urlFrontier, nil
 }
 
 func GetUrlFrontierById(ctx context.Context, id string) (repository.UrlFrontier, error) {
@@ -120,16 +111,7 @@ func GetUrlFrontierById(ctx context.Context, id string) (repository.UrlFrontier,
 		return repository.UrlFrontier{}, err
 	}
 
-	return repository.UrlFrontier{
-		ID:        urlFrontier.ID,
-		Domain:    urlFrontier.Domain,
-		Url:       urlFrontier.Url,
-		Crawler:   urlFrontier.Crawler,
-		Status:    urlFrontier.Status,
-		Metadata:  urlFrontier.Metadata,
-		CreatedAt: urlFrontier.CreatedAt,
-		UpdatedAt: urlFrontier.UpdatedAt,
-	}, nil
+	return urlFrontier, nil
 }
 
 func GetUnscrappedUrlFrontiers(ctx context.Context, limit int32) ([]repository.UrlFrontier, error) {
@@ -151,18 +133,5 @@ func GetUnscrappedUrlFrontiers(ctx context.Context, limit int32) ([]repository.U
 		return nil, err
 	}
 
-	res := lo.Map(urlFrontiers, func(u repository.GetUnscrappedUrlFrontiersRow, _ int) repository.UrlFrontier {
-		return repository.UrlFrontier{
-			ID:        u.ID,
-			Domain:    u.Domain,
-			Url:       u.Url,
-			Crawler:   u.Crawler,
-			Status:    u.Status,
-			Metadata:  u.Metadata,
-			CreatedAt: u.CreatedAt,
-			UpdatedAt: u.UpdatedAt,
-		}
-	})
-
-	return res, nil
+	return urlFrontiers, nil
 }
