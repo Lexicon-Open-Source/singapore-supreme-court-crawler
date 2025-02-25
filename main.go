@@ -66,5 +66,7 @@ func main() {
 
 	scrapper := scrapper.ScrapperImpl{}
 	scrapper.Setup()
-	scrapper.ScrapeAll(ctx)
+	if err := scrapper.ScrapeAll(ctx); err != nil {
+		log.Error().Err(err).Msg("ScrapeAll error")
+	}
 }

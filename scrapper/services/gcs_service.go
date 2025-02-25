@@ -27,19 +27,17 @@ func HandlePdf(ctx context.Context, name string, pdfUrl string) (lo.Tuple3[strin
 	pdfLocalPath, err := downloadFile(pdfUrl, sanitizedName, "pdf")
 	if err != nil {
 		log.Error().Err(err).Msg("Error downloading pdf")
-		return lo.Tuple3[string, string, int64]{}, nil
+		return lo.Tuple3[string, string, int64]{}, err
 	}
 	path, err := uploadToGCS(ctx, common.StorageClient, common.GCS_BUCKET, pdfLocalPath.A, sanitizedName, common.GCS_FOLDER)
 	if err != nil {
 		log.Error().Err(err).Msg("Error uploading pdf to gcs")
-		return lo.Tuple3[string, string, int64]{}, nil
-
+		return lo.Tuple3[string, string, int64]{}, err
 	}
 
 	if err := os.Remove(pdfLocalPath.A); err != nil {
 		log.Error().Err(err).Msg("Error removing pdf file")
-		return lo.Tuple3[string, string, int64]{}, nil
-
+		return lo.Tuple3[string, string, int64]{}, err
 	}
 
 	return lo.T3(name, path, pdfLocalPath.B), nil
@@ -54,7 +52,7 @@ func HandleHtml(ctx context.Context, name string, url string) (lo.Tuple3[string,
 	sanitizedName := strings.ReplaceAll(fileName[:int(size)], " ", "_")
 	pdfLocalPath, err := downloadFile(url, sanitizedName, "html")
 	if err != nil {
-		log.Error().Err(err).Msg("Error downloading pdf")
+		log.Error().Err(err).Msg("Error downloading HTML")
 		return lo.Tuple3[string, string, int64]{}, nil
 	}
 	path, err := uploadToGCS(ctx, common.StorageClient, common.GCS_BUCKET, pdfLocalPath.A, sanitizedName, common.GCS_HTML_FOLDER)
