@@ -1,182 +1,470 @@
 package crawler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"lexicon/singapore-supreme-court-crawler/common"
 	"lexicon/singapore-supreme-court-crawler/crawler/models"
 	"lexicon/singapore-supreme-court-crawler/crawler/services"
+	"lexicon/singapore-supreme-court-crawler/repository"
+	"sync"
+	"time"
 
-	scrapperModel "lexicon/singapore-supreme-court-crawler/scrapper/models"
-	scrapperService "lexicon/singapore-supreme-court-crawler/scrapper/services"
 	stdUrl "net/url"
 	"regexp"
 	"strconv"
-	"strings"
-	"time"
 
-	"github.com/gocolly/colly/v2"
-	"github.com/golang-module/carbon/v2"
-	"github.com/guregu/null"
+	"github.com/go-rod/rod"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog/log"
+	"github.com/samber/lo"
 )
 
-func StartCrawler() {
+type urlCrawler struct {
+	BaseUrl        string
+	Filter         string
+	YearOfDecision string
+	SortBy         string
+	CurrentPage    int
+	SortAscending  bool
+	SearchPhrase   string
+	Verbose        bool
+}
 
-	startPage := 1
+func (u *urlCrawler) constructUrl() string {
+	return fmt.Sprintf("%s?filter=%s&yearOfDecision=%s&sortBy=%s&currentPage=%d&sortAscending=%t&searchPhrase=%s&verbose=%t", u.BaseUrl, u.Filter, u.YearOfDecision, u.SortBy, u.CurrentPage, u.SortAscending, u.SearchPhrase, u.Verbose)
+}
 
-	url := "https://www.elitigation.sg/gd/Home/Index?filter=SUPCT&yearOfDecision=All&sortBy=DateOfDecision&currentPage=" + strconv.Itoa(startPage) + "&sortAscending=False&searchPhrase=CatchWords:%22Corruption%22&verbose=False"
+func (u *urlCrawler) copy() urlCrawler {
+	return urlCrawler{
+		BaseUrl:        u.BaseUrl,
+		Filter:         u.Filter,
+		YearOfDecision: u.YearOfDecision,
+		SortBy:         u.SortBy,
+		CurrentPage:    u.CurrentPage,
+		SortAscending:  u.SortAscending,
+		SearchPhrase:   u.SearchPhrase,
+		Verbose:        u.Verbose,
+	}
+}
 
-	lastPage := getLastPage(url)
-
-	totalData := (10 * lastPage) - ((startPage - 1) * 10)
-	log.Info().Msg("Total Data: " + strconv.Itoa(totalData))
-	for i := startPage; i <= lastPage; i++ {
-		details := crawlUrl("https://www.elitigation.sg/gd/Home/Index?filter=SUPCT&yearOfDecision=All&sortBy=DateOfDecision&currentPage=" + strconv.Itoa(i) + "&sortAscending=False&searchPhrase=CatchWords:%22Corruption%22&verbose=False")
-
-		log.Info().Msg("Details: " + strconv.Itoa(len(details)))
-		allDetails := []models.UrlFrontier{}
-		allExtraction := []scrapperModel.Extraction{}
-
-		for _, detail := range details {
-
-			id := sha256.Sum256([]byte(detail.Url))
-			currentTime := carbon.Now().ToDateTimeStruct()
-			allDetails = append(allDetails, models.UrlFrontier{
-				Id:        hex.EncodeToString(id[:]),
-				Url:       detail.Url,
-				Domain:    common.CRAWLER_DOMAIN,
-				Crawler:   common.CRAWLER_NAME,
-				Status:    models.URL_FRONTIER_STATUS_NEW,
-				CreatedAt: currentTime,
-				UpdatedAt: currentTime,
-			})
-
-			extractionData := scrapperModel.Extraction{
-				Id:            hex.EncodeToString(id[:]),
-				UrlFrontierId: hex.EncodeToString(id[:]),
-				Language:      "en",
-				Metadata: scrapperModel.Metadata{
-					Id:             hex.EncodeToString(id[:]),
-					Title:          detail.Metadata.Title,
-					Number:         detail.Metadata.CaseNumber,
-					CitationNumber: detail.Metadata.CitationNumber,
-					Classification: detail.Metadata.CatchWords,
-					Year:           strconv.Itoa(detail.Metadata.DecisionDate.Year()),
-					DecisionDate:   detail.Metadata.DecisionDate.ToDateString(),
-				},
-				RawPageLink: null.StringFrom(detail.Url),
-				CreatedAt:   currentTime,
-				UpdatedAt:   currentTime,
-			}
-			allExtraction = append(allExtraction, extractionData)
-		}
-
-		err := services.UpsertUrl(allDetails)
-		for _, ext := range allExtraction {
-			err = scrapperService.UpsertExtraction(ext)
-
-		}
-
-		// insert temporary extraction data
-
-		if err != nil {
-			log.Error().Err(err).Msg("Error upserting url")
-		}
-
-		time.Sleep(time.Second * 2)
+func newUrlCrawler(baseUrl string) (urlCrawler, error) {
+	parsedUrl, err := stdUrl.Parse(baseUrl)
+	if err != nil {
+		log.Error().Err(err).Msg("Error parsing URL")
+		return urlCrawler{}, err
 	}
 
-}
+	base := fmt.Sprintf("%s://%s%s", parsedUrl.Scheme, parsedUrl.Host, parsedUrl.Path)
 
-func getLastPage(url string) int {
-	lastPage := 0
-	c := colly.NewCollector(
-		colly.AllowedDomains("www.elitigation.sg"),
-	)
+	filter := parsedUrl.Query().Get("filter")
+	yearOfDecision := parsedUrl.Query().Get("yearOfDecision")
+	sortBy := parsedUrl.Query().Get("sortBy")
+	sortAscending := parsedUrl.Query().Get("sortAscending")
+	searchPhrase := parsedUrl.Query().Get("searchPhrase")
+	verbose := parsedUrl.Query().Get("verbose")
+	currentPage := parsedUrl.Query().Get("currentPage")
 
-	// find lastPage links
-	c.OnHTML("#listview > div.row.justify-content-end > div > ul", func(e *colly.HTMLElement) {
+	currentPageInt, err := strconv.Atoi(currentPage)
+	if err != nil {
+		log.Error().Err(err).Msg("Error converting currentPage to integer")
+		return urlCrawler{}, err
+	}
 
-		e.ForEach("li.page-item.page-link", func(i int, f *colly.HTMLElement) {
+	sortAscendingBool, err := strconv.ParseBool(sortAscending)
+	if err != nil {
+		log.Error().Err(err).Msg("Error converting sortAscending to boolean")
+		return urlCrawler{}, err
+	}
 
-			lastUrl := f.ChildAttr("a", "href")
-			if lastUrl == "" {
-				return
-			}
+	verboseBool, err := strconv.ParseBool(verbose)
+	if err != nil {
+		log.Error().Err(err).Msg("Error converting verbose to boolean")
+		return urlCrawler{}, err
+	}
 
-			u, err := stdUrl.Parse(lastUrl)
-			if err != nil {
-				fmt.Println("Error parsing URL:", err)
-				return
-			}
-
-			q := u.Query()
-			currentPageStr := q.Get("CurrentPage")
-			currentPage, err := strconv.Atoi(currentPageStr)
-
-			if err != nil {
-				fmt.Println("Error converting CurrentPage to integer:", err)
-				return
-			}
-
-			if lastPage < currentPage {
-				lastPage = currentPage
-			}
-		})
-
-	})
-
-	c.OnRequest(func(r *colly.Request) {
-		log.Info().Msg("Visiting: " + r.URL.String())
-	})
-	c.Visit(url)
-	return lastPage
+	return urlCrawler{
+		BaseUrl:        base,
+		Filter:         filter,
+		YearOfDecision: yearOfDecision,
+		SortBy:         sortBy,
+		SortAscending:  sortAscendingBool,
+		SearchPhrase:   searchPhrase,
+		Verbose:        verboseBool,
+		CurrentPage:    currentPageInt,
+	}, nil
 
 }
-func crawlUrl(url string) []models.CrawlerResult {
+
+type Crawler interface {
+	Setup()
+	Teardown()
+	CrawlAll(ctx context.Context) error
+	Crawl(ctx context.Context, url string) error
+	Consume(m jetstream.Msg) error
+}
+
+type CrawlerImpl struct {
+	browser *rod.Browser
+}
+
+func (c *CrawlerImpl) Setup() {
+	c.browser = rod.New().MustConnect()
+}
+
+func (c *CrawlerImpl) Teardown() {
+	c.browser.MustClose()
+}
+
+func (c *CrawlerImpl) CrawlAll(ctx context.Context) error {
+	startUrl := "https://www.elitigation.sg/gd/Home/Index?filter=SUPCT&yearOfDecision=All&sortBy=DateOfDecision&currentPage=1&sortAscending=False&searchPhrase=CatchWords:Corruption&verbose=False"
+
+	pagePool := rod.NewPagePool(7)
+	defer pagePool.Cleanup(func(p *rod.Page) {
+		err := p.Close()
+		if err != nil {
+			log.Error().Err(err).Msg("Error closing page")
+		}
+	})
+
+	create := func() (*rod.Page, error) {
+
+		incognito, err := c.browser.Incognito()
+		if err != nil {
+			log.Error().Err(err).Msg("Error creating incognito page")
+			return nil, err
+		}
+		return incognito.MustPage(), nil
+
+	}
+
+	createListOfUrl := func(urlCrawler urlCrawler, startPage int, endPage int) []string {
+		urls := []string{}
+		for i := startPage; i <= endPage; i++ {
+			newUrlCrawler := urlCrawler.copy()
+			newUrlCrawler.CurrentPage = i
+			urls = append(urls, newUrlCrawler.constructUrl())
+		}
+		return urls
+	}
+
+	job := func(urlPage string) error {
+
+		page, err := pagePool.Get(create)
+		if err != nil {
+			log.Error().Err(err).Msg("Error getting page")
+			return err
+		}
+		defer pagePool.Put(page)
+		return c.crawlJudgement(ctx, page, urlPage)
+
+	}
+	parsedUrl, err := stdUrl.Parse(startUrl)
+	if err != nil {
+		log.Error().Err(err).Msg("Error parsing URL")
+		return err
+	}
+	currentPage := parsedUrl.Query().Get("currentPage")
+	if currentPage == "" {
+		currentPage = "1"
+	}
+	currentPageInt, err := strconv.Atoi(currentPage)
+	if err != nil {
+		log.Error().Err(err).Msg("Error converting currentPage to integer")
+		return err
+	}
+
+	rpLast, err := create()
+	if err != nil {
+		return fmt.Errorf("failed to create page for last page check: %w", err)
+	}
+	defer rpLast.Close()
+
+	lastPage, err := getLastPage(ctx, rpLast, startUrl)
+	if err != nil {
+		return fmt.Errorf("failed to get last page: %w", err)
+	}
+
+	lastPageInt, totalResult := lastPage.Unpack()
+
+	log.Info().Msg("Total result: " + strconv.Itoa(totalResult))
+
+	urlCrawler, err := newUrlCrawler(startUrl)
+	if err != nil {
+		log.Error().Err(err).Msg("Error creating url crawler")
+		return err
+	}
+
+	urlList := createListOfUrl(urlCrawler, currentPageInt, lastPageInt)
+
+	chunks := lo.Chunk(urlList, 7)
+
+	var crawlErrors []error
+	errChan := make(chan error, len(urlList)) // Channel to collect errors
+
+	// Create a new context with cancellation
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel() // Ensure all resources are cleaned up
+
+	for _, urls := range chunks {
+		// Check if context is cancelled before starting new chunk
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		wg := sync.WaitGroup{}
+
+		// Process all URLs in the chunk concurrently
+		for _, url := range urls {
+			wg.Add(1)
+			go func(url string) {
+				defer wg.Done()
+
+				// Create a new context for this goroutine
+				select {
+				case <-ctx.Done():
+					errChan <- ctx.Err()
+					return
+				default:
+					if err := job(url); err != nil {
+						errChan <- fmt.Errorf("error crawling %s: %w", url, err)
+						// Optional: cancel other goroutines if you want to stop on first error
+						// cancel()
+					}
+				}
+			}(url)
+		}
+
+		go func() {
+			wg.Wait()
+			close(errChan)
+		}()
+	}
+
+	// Collect any errors that occurred
+	for err := range errChan {
+		if err != nil {
+			if err == context.Canceled {
+				return fmt.Errorf("crawling was cancelled: %w", err)
+			}
+			crawlErrors = append(crawlErrors, err)
+		}
+	}
+
+	// If there were any errors, return them combined
+	if len(crawlErrors) > 0 {
+		return fmt.Errorf("encountered %d errors during crawling: %v", len(crawlErrors), crawlErrors)
+	}
+
+	return nil
+}
+
+func (c *CrawlerImpl) Crawl(ctx context.Context, url string) error {
+	page := c.browser.MustPage(url)
+
+	c.crawlJudgement(ctx, page, url)
+
+	return nil
+
+}
+
+func (c *CrawlerImpl) Consume(m jetstream.Msg) error {
+
+	return nil
+}
+
+func (c *CrawlerImpl) crawlJudgement(ctx context.Context, rp *rod.Page, url string) error {
 	log.Info().Msg("Crawling URL: " + url)
-	c := colly.NewCollector(
-		colly.AllowedDomains("www.elitigation.sg"),
-	)
-	c.SetRequestTimeout(time.Minute * 2)
-	var detailUrls []models.CrawlerResult
-	// find current page links
-	c.OnHTML("#listview", func(e *colly.HTMLElement) {
 
-		e.ForEach(".card.col-12", func(i int, f *colly.HTMLElement) {
-			link := f.ChildAttr(" a.h5.gd-heardertext", "href")
-			if link == "" {
-				return
-			}
-			if !isDetailPage(link) {
-				return
-			}
-			stringDate := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(f.ChildText("a.decision-date-link"), "Decision Date:", ""), "|", ""))
-			decisionDate := carbon.ParseByFormat(stringDate, "j M Y").ToDateTimeStruct()
-			detailUrls = append(detailUrls, models.CrawlerResult{
-				Url: fmt.Sprintf("https://%s%s", common.CRAWLER_DOMAIN, link),
-				Metadata: models.CrawlerMetadata{
-					Title:          f.ChildText("a.h5.gd-heardertext"),
-					CaseNumber:     f.ChildText("a.case-num-link"),
-					CitationNumber: strings.TrimSpace(strings.ReplaceAll(f.ChildText("a.citation-num-link"), "|", "")),
-					DecisionDate:   decisionDate,
-					CatchWords:     f.ChildText("div.gd-catchword-container > a"),
-				},
-			})
+	// Check context before starting
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	rpCtx := rp.Context(ctx)
+	wait := rpCtx.MustWaitNavigation()
+	err := rpCtx.Navigate(url)
+	if err != nil {
+		log.Error().Err(err).Msg("Error navigating to url")
+		return err
+	}
+	wait()
+
+	// Check context after navigation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	rp = rpCtx.MustWaitStable()
+
+	elements, err := rp.Elements("#listview > div.row > div.card.col-12")
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting elements")
+		return err
+	}
+
+	log.Info().Msgf("Found %d elements", len(elements))
+
+	detailUrls := []repository.UrlFrontier{}
+	for _, element := range elements {
+
+		crawlerResult, err := getElementContent(element)
+
+		if err != nil {
+			log.Error().Err(err).Msg("Error getting element content")
+			continue
+		}
+
+		detailUrls = append(detailUrls, crawlerResult)
+		log.Info().Msg("Crawler result: " + crawlerResult.Url)
+	}
+
+	allDetails := []repository.UrlFrontier{}
+
+	for _, detail := range detailUrls {
+
+		id := sha256.Sum256([]byte(detail.Url))
+		currentTime := time.Now()
+		allDetails = append(allDetails, repository.UrlFrontier{
+			ID:        hex.EncodeToString(id[:]),
+			Url:       detail.Url,
+			Domain:    common.CRAWLER_DOMAIN,
+			Crawler:   common.CRAWLER_NAME,
+			Status:    models.URL_FRONTIER_STATUS_NEW,
+			CreatedAt: currentTime,
+			UpdatedAt: currentTime,
+			Metadata:  detail.Metadata,
 		})
 
-	})
+	}
+	log.Info().Msgf("Upserting %d urls", len(allDetails))
+	err = services.UpsertUrl(ctx, allDetails)
 
-	c.OnRequest(func(r *colly.Request) {
-		log.Info().Msg("Visiting: " + r.URL.String())
-	})
+	if err != nil {
+		log.Error().Err(err).Msg("Error upserting url")
+	}
 
-	c.Visit(url)
+	log.Info().Msgf("Crawling url: %s done!", url)
+	return nil
+}
+func getElementContent(element *rod.Element) (repository.UrlFrontier, error) {
+	link := element.MustElement("a.h5.gd-heardertext").MustAttribute("href")
+	if link == nil {
+		return repository.UrlFrontier{}, errors.New("link is empty")
+	}
+	if !isDetailPage(*link) {
+		return repository.UrlFrontier{}, errors.New("link is not a detail page")
+	}
 
-	return detailUrls
-	//find pagination links
+	title, err := getTitle(element)
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting title")
+		return repository.UrlFrontier{}, err
+	}
+	caseNumbers, err := getCaseNumbers(element)
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting case numbers")
+		return repository.UrlFrontier{}, err
+	}
+	citationNumber, err := getCitationNumber(element)
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting citation number")
+		return repository.UrlFrontier{}, err
+	}
+	categories, err := getCategories(element)
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting categories")
+		return repository.UrlFrontier{}, err
+	}
+
+	decisionDate, err := getDecisionDate(element)
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting decision date")
+		return repository.UrlFrontier{}, err
+	}
+	detailUrls := repository.UrlFrontier{
+		Url: fmt.Sprintf("https://%s%s", common.CRAWLER_DOMAIN, *link),
+		Metadata: models.UrlFrontierMetadata{
+			Title:          title,
+			CaseNumbers:    caseNumbers,
+			CitationNumber: citationNumber,
+			DecisionDate:   decisionDate,
+			Categories:     categories,
+		},
+	}
+
+	return detailUrls, nil
+}
+
+func getLastPage(ctx context.Context, rp *rod.Page, url string) (lo.Tuple2[int, int], error) {
+	lastPage := 0
+
+	if err := rp.Context(ctx).Navigate(url); err != nil {
+		if err == context.Canceled {
+			return lo.Tuple2[int, int]{}, err
+		}
+		log.Error().Err(err).Msg("Error navigating to url")
+		return lo.Tuple2[int, int]{}, err
+	}
+	totalResult := 0
+	totalResultElement, err := rp.Element("#listview > div.row.justify-content-between.align-items-center > div.gd-csummary")
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting total result element")
+		return lo.Tuple2[int, int]{}, err
+	}
+	res, err := totalResultElement.HTML()
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting total result element")
+		return lo.Tuple2[int, int]{}, err
+	}
+	totalResult, err = strconv.Atoi(regexp.MustCompile(`\d+`).FindString(res))
+	if err != nil {
+		log.Error().Err(err).Msg("Error converting total result to integer")
+		return lo.Tuple2[int, int]{}, err
+	}
+
+	elements, err := rp.Elements("#listview > div.row.justify-content-end > div > ul > li.page-item.page-link> a")
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting elements")
+		return lo.Tuple2[int, int]{}, err
+	}
+	for _, element := range elements {
+		if element.MustHTML() == "" {
+			continue
+		}
+		href := element.MustAttribute("href")
+		if href == nil {
+			continue
+		}
+		u, err := stdUrl.Parse(*href)
+		if err != nil {
+			log.Error().Err(err).Msg("Error parsing URL")
+			continue
+		}
+		lp := u.Query().Get("CurrentPage")
+		lpInt, err := strconv.Atoi(lp)
+		if err != nil {
+			log.Error().Err(err).Msg("Error converting LP to integer")
+			continue
+		}
+		if lastPage < lpInt {
+			lastPage = lpInt
+		}
+	}
+
+	return lo.Tuple2[int, int]{
+		A: lastPage,
+		B: totalResult,
+	}, nil
 
 }
 

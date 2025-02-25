@@ -1,352 +1,267 @@
 package scrapper
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"lexicon/singapore-supreme-court-crawler/common"
 	crawler_model "lexicon/singapore-supreme-court-crawler/crawler/models"
 	crawler_service "lexicon/singapore-supreme-court-crawler/crawler/services"
-	"lexicon/singapore-supreme-court-crawler/scrapper/models"
+	"lexicon/singapore-supreme-court-crawler/repository"
 	"lexicon/singapore-supreme-court-crawler/scrapper/services"
-	"strconv"
-	"strings"
+	"sync"
 	"time"
 
-	md "github.com/JohannesKaufmann/html-to-markdown"
-	mdp "github.com/JohannesKaufmann/html-to-markdown/plugin"
-
-	"github.com/gocolly/colly/v2"
-	"github.com/gocolly/colly/v2/queue"
-
-	gq "github.com/PuerkitoBio/goquery"
-
+	"github.com/go-rod/rod"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog/log"
+	"github.com/samber/lo"
 )
 
-func StartScraper() {
+type Scrapper interface {
+	Setup()
+	Teardown()
+	Scrape(ctx context.Context, url string) error
+	ScrapeAll(ctx context.Context) error
+	ScrapeAllSequential(ctx context.Context) error
+	Consume(m jetstream.Msg) error
+}
+
+type ScrapperImpl struct {
+	browser *rod.Browser
+}
+
+func (c *ScrapperImpl) Setup() {
+	c.browser = rod.New().MustConnect()
+}
+
+func (c *ScrapperImpl) Teardown() {
+	c.browser.MustClose()
+}
+
+func (c *ScrapperImpl) Consume(m jetstream.Msg) error {
+	return nil
+}
+
+func (c *ScrapperImpl) Scrape(ctx context.Context, url string) error {
+	return nil
+}
+
+func (c *ScrapperImpl) ScrapeAll(ctx context.Context) error {
+
+	// Create a new context with cancellation
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel() // Ensure all resources are cleaned up
+
+	var unscrappedUrlFrontiers []repository.UrlFrontier
 	// Fetch unscrapped url frontier from db
-	list, err := crawler_service.GetUnscrapedUrlFrontier()
-	if err != nil {
-		log.Error().Err(err).Msg("Error fetching unscrapped url frontier")
-	}
 
-	log.Info().Msg("Unscrapped URLs: " + strconv.Itoa(len(list)))
-
-	q, err := queue.New(1, &queue.InMemoryQueueStorage{MaxSize: 100000})
-	if err != nil {
-		log.Error().Err(err).Msg("Error creating queue")
-	}
-
-	scrapper, err := buildScrapper()
-	if err != nil {
-		log.Error().Err(err).Msg("Error building scrapper")
-	}
-
-	for _, url := range list {
-		// scrape url
-		q.AddURL(url.Url)
-	}
-	q.Run(scrapper)
-	scrapper.Wait()
-}
-
-func buildScrapper() (*colly.Collector, error) {
-	var newExtraction models.Extraction
-	c := colly.NewCollector(
-		colly.AllowedDomains(common.CRAWLER_DOMAIN),
-		// colly.Async(true),
-		colly.MaxDepth(1),
-	)
-	c.Limit(&colly.LimitRule{
-		DomainGlob:  common.CRAWLER_DOMAIN,
-		Delay:       time.Second * 2,
-		RandomDelay: time.Second * 2,
-	})
-
-	c.SetRequestTimeout(time.Minute * 2)
-
-	c.OnHTML("#divJudgement", func(e *colly.HTMLElement) {
-
-		if e.ChildText("content") == "" {
-			newExtraction = crawlOldTemplate(e)
-
-		}
-		newExtraction = crawlNewTemplate(e)
-
-	})
-
-	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
-		url := e.Attr("href")
-		var pdfUrl string
-		if strings.Contains(url, "pdf") {
-			pdfUrl = url
-		}
-
-		if pdfUrl != "" {
-			pdfUrl = fmt.Sprintf("https://%s%s", common.CRAWLER_DOMAIN, pdfUrl)
-			log.Info().Msg("Found PDF: " + pdfUrl)
-			newExtraction.Metadata.PdfUrl = pdfUrl
-
-		}
-	})
-	c.OnRequest(func(r *colly.Request) {
-		log.Info().Msg("Visiting: " + r.URL.String())
-	})
-	c.OnScraped(func(r *colly.Response) {
-		frontierId := sha256.Sum256([]byte(r.Request.URL.String()))
-		newExtraction.UrlFrontierId = hex.EncodeToString(frontierId[:])
-		newExtraction.Id = hex.EncodeToString(frontierId[:])
-		newExtraction.AddRawPageLink(r.Request.URL.String())
-		newExtraction.UpdateUpdatedAt()
-
-		if newExtraction.Metadata.PdfUrl != "" {
-			log.Info().Msg("Uploading PDF to GCS: " + newExtraction.Metadata.PdfUrl)
-
-			artifact, err := services.HandlePdf(newExtraction.Metadata, newExtraction.Metadata.PdfUrl, newExtraction.Metadata.Id+".pdf")
-			if err != nil {
-				log.Error().Err(err).Msg("Error handling pdf")
-			}
-
-			newExtraction.AddArtifactLink(artifact)
-		}
-		log.Info().Msg("Upserting extraction: " + newExtraction.Id)
-		err := services.UpsertExtraction(newExtraction)
+	pagePool := rod.NewPagePool(10)
+	defer pagePool.Cleanup(func(p *rod.Page) {
+		err := p.Close()
 		if err != nil {
-			log.Error().Err(err).Msg("Error upserting extraction")
+			log.Error().Err(err).Msg("Error closing page")
 		}
-		log.Info().Msg("Updating url frontier status: " + newExtraction.UrlFrontierId)
-		err = crawler_service.UpdateUrlFrontierStatus(newExtraction.UrlFrontierId, crawler_model.URL_FRONTIER_STATUS_CRAWLED)
-		if err != nil {
-			log.Error().Err(err).Msg("Error updating url frontier status")
-		}
-
-		log.Info().Msg("Scraped: " + r.Request.URL.String())
 	})
 
-	return c, nil
-}
-
-func crawlNewTemplate(e *colly.HTMLElement) models.Extraction {
-
-	url := e.Request.URL.String()
-	currentExtraction, err := services.GetCurrentExtraction(url)
-	if err != nil {
-		log.Error().Err(err).Msg("Error getting current extraction")
-		return models.Extraction{}
+	create := func() (*rod.Page, error) {
+		incognito, err := c.browser.Incognito()
+		if err != nil {
+			log.Error().Err(err).Msg("Error creating incognito page")
+			return nil, err
+		}
+		return incognito.MustPage(), nil
 	}
 
-	e.ForEach("div.CaseNumber", func(i int, f *colly.HTMLElement) {
-		currentExtraction.Metadata.Number = f.Text
-	})
-
-	title := currentExtraction.Metadata.Title
-	splittedTitle := strings.Split(title, " v ")
-
-	for _, part := range splittedTitle {
-		if strings.Contains(strings.ToLower(part), "public prosecutor") {
-			continue
+	job := func(ctx context.Context, urlFrontier repository.UrlFrontier, c chan<- repository.Extraction) error {
+		page, err := pagePool.Get(create)
+		if err != nil {
+			log.Error().Err(err).Msg("Error getting page")
+			return err
 		}
-
-		currentExtraction.Metadata.Defendant = strings.TrimSpace(part)
+		defer pagePool.Put(page)
+		extraction, err := scrapeUrlFrontiers(ctx, page, urlFrontier)
+		if err != nil {
+			log.Error().Err(err).Msg("Error scraping url frontier")
+			return err
+		}
+		c <- extraction
+		return nil
 	}
 
-	e.ForEach("div.HN-Coram", func(i int, f *colly.HTMLElement) {
+	for ok := true; ok; ok = len(unscrappedUrlFrontiers) > 0 {
 
-		splittedCoram := strings.Split(f.Text, "\n")
-
-		for i, part := range splittedCoram {
-			if i == 0 {
-				courtSplit := strings.Split(part, "—")
-				currentExtraction.Metadata.JudicalInstitution = strings.TrimSpace(courtSplit[0])
-				continue
-			}
-			if i == 1 {
-				currentExtraction.Metadata.Judges = strings.TrimSpace(part)
-				continue
-			}
-
+		// Check if context is cancelled before starting new chunk
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
-	})
 
-	var rawVerdict []string
-	var markdownVerdict []string
-	converter := md.NewConverter("", true, nil)
-	converter.Use(mdp.GitHubFlavored())
-
-	converter.AddRules(
-		md.Rule{
-			Filter: []string{"div.Judg-Heading-1"},
-			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
-				content = strings.TrimSpace(content)
-				return md.String("## " + content)
-			},
-		},
-		md.Rule{
-			Filter: []string{"div.Judg-Heading-2"},
-			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
-				content = strings.TrimSpace(content)
-				return md.String("### " + content)
-			},
-		},
-		md.Rule{
-			Filter: []string{"p.Judge-Quote-0"},
-			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
-				content = strings.TrimSpace(content)
-				return md.String("> " + content)
-			},
-		},
-		md.Rule{
-			Filter: []string{"p.Judge-Quote-1"},
-			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
-				content = strings.TrimSpace(content)
-				return md.String(">> " + content)
-			},
-		},
-		md.Rule{
-			Filter: []string{"p.Judge-Quote-2"},
-			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
-				content = strings.TrimSpace(content)
-				return md.String(">>> " + content)
-			},
-		},
-	)
-	e.ForEachWithBreak("#divJudgement > content > div.row > div.col.col-md-12.align-self-center", func(i int, f *colly.HTMLElement) bool {
-
-		rawVerdict = append(rawVerdict, f.Text)
-		html, err := f.DOM.Html()
+		var scraperErrors []error
+		unscrappedUrlFrontiers, err := crawler_service.GetUnscrappedUrlFrontiers(ctx, 100)
 		if err != nil {
-			log.Error().Err(err).Msg("Error getting html")
-			return false
+			log.Error().Err(err).Msg("Error fetching unscrapped url frontier")
 		}
-		md, err := converter.ConvertString(html)
-		if err != nil {
-			log.Error().Err(err).Msg("Error converting verdict")
-			return false
-		}
+		log.Info().Msgf("Unscrapped URLs: %d", len(unscrappedUrlFrontiers))
 
-		markdownVerdict = append(markdownVerdict, md)
+		chunks := lo.Chunk(unscrappedUrlFrontiers, 10)
 
-		return true
-	})
-	currentExtraction.Metadata.Verdict = strings.Join(rawVerdict, "\n")
-	currentExtraction.Metadata.VerdictMarkdown = strings.Join(markdownVerdict, "\n")
-
-	return currentExtraction
-
-}
-
-func crawlOldTemplate(e *colly.HTMLElement) models.Extraction {
-	currentExtraction, err := services.GetCurrentExtraction(e.Request.URL.String())
-
-	if err != nil {
-		log.Error().Err(err).Msg("Error getting current extraction")
-		return models.Extraction{}
-	}
-	e.ForEach("#info-table", func(i int, f *colly.HTMLElement) {
-		f.ForEach("tr.info-row", func(i int, g *colly.HTMLElement) {
-			key := g.ChildText("td.txt-label")
-			value := g.ChildText("td.txt-body")
-
-			if strings.Contains(key, "Tribunal/Court") {
-				currentExtraction.Metadata.JudicalInstitution = value
+		for _, urlFrontiers := range chunks {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
 			}
-			if strings.Contains(key, "Counsel Name") {
-				currentExtraction.Metadata.Judges = value
-			}
-			if strings.Contains(key, "Parties") {
-				extractedParties := strings.Split(value, "—")
-				var defendant string
-				for _, party := range extractedParties {
-					if strings.Contains(strings.ToLower(party), "public prosecutor") {
-						continue
+
+			wg := sync.WaitGroup{}
+			extractionChan := make(chan repository.Extraction, len(urlFrontiers))
+			errChan := make(chan error, len(urlFrontiers))
+
+			for _, urlFrontier := range urlFrontiers {
+				wg.Add(1)
+				go func(urlFrontier repository.UrlFrontier) {
+					defer wg.Done()
+
+					select {
+					case <-ctx.Done():
+						errChan <- ctx.Err()
+					default:
+						if err := job(ctx, urlFrontier, extractionChan); err != nil {
+							errChan <- fmt.Errorf("error crawling %s: %w", urlFrontier.Url, err)
+						}
 					}
-					defendant = strings.TrimSpace(party)
-				}
-				currentExtraction.Metadata.Defendant = defendant
+				}(urlFrontier)
 			}
 
-			if strings.Contains(key, "Case Number") {
-				currentExtraction.Metadata.Number = value
+			// Wait for all goroutines to finish
+			wg.Wait()
+
+			// Close channels after all goroutines are done
+			close(errChan)
+			close(extractionChan)
+
+			// Collect errors and extractions
+			for err := range errChan {
+				scraperErrors = append(scraperErrors, err)
 			}
-		})
-	})
-	var rawVerdict []string
-	var markdownVerdict []string
-	converter := md.NewConverter("", true, nil)
-	converter.Use(mdp.GitHubFlavored())
 
-	converter.AddRules(
-		md.Rule{
-			Filter: []string{"p.Judg-Author"},
-			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
+			var extractions []repository.Extraction
+			for extraction := range extractionChan {
+				extractions = append(extractions, extraction)
+			}
 
-				content = strings.TrimSpace(content)
-				return md.String("## " + content)
-			},
-		},
-		md.Rule{
-			Filter: []string{"p.Judge-Quote-1"},
-			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
+			if len(scraperErrors) > 0 {
+				log.Error().Err(scraperErrors[0]).Msg("Error scraping url frontier")
+			}
+			log.Info().Msgf("Upserting extractions")
+			err := services.UpsertExtraction(ctx, extractions)
+			if err != nil {
+				log.Error().Err(err).Msg("Error upserting extractions")
+			}
+			log.Info().Msgf("Updating url frontier statuses")
+			err = crawler_service.UpdateFrontierStatuses(ctx, lo.Map(urlFrontiers, func(urlFrontier repository.UrlFrontier, _ int) lo.Tuple2[string, int16] {
+				return lo.Tuple2[string, int16]{A: urlFrontier.ID, B: crawler_model.URL_FRONTIER_STATUS_CRAWLED}
+			}))
+			if err != nil {
+				log.Error().Err(err).Msg("Error updating url frontier status")
+			}
+			log.Info().Msgf("Finished scraping chunk")
 
-				content = strings.TrimSpace(content)
-				return md.String("> " + content)
-			},
-		},
-		md.Rule{
-			Filter: []string{"p.Judge-Quote-2"},
-			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
-				content = strings.TrimSpace(content)
-				return md.String(">> " + content)
-			},
-		},
-		md.Rule{
-			Filter: []string{"p.Judg-Heading-1"},
-			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
-				content = strings.TrimSpace(content)
-				return md.String("## " + content)
-			},
-		},
-		md.Rule{
-			Filter: []string{"p.Judg-Heading-2"},
-			Replacement: func(content string, selec *gq.Selection, options *md.Options) *string {
-
-				content = strings.TrimSpace(content)
-				return md.String("### " + content)
-			},
-		},
-	)
-	e.ForEachWithBreak("#divJudgement > div > p", func(i int, f *colly.HTMLElement) bool {
-		if f.Attr("class") == "Footnote" {
-			return false
 		}
 
-		rawVerdict = append(rawVerdict, f.Text)
-		html, err := f.DOM.Html()
+	}
+	log.Info().Msgf("Finished scraping all url frontiers")
+	return nil
+}
+
+func scrapeUrlFrontiers(ctx context.Context, page *rod.Page, urlFrontier repository.UrlFrontier) (repository.Extraction, error) {
+
+	select {
+	case <-ctx.Done():
+		return repository.Extraction{}, ctx.Err()
+	default:
+	}
+	log.Info().Msgf("Scraping url: %s", urlFrontier.Url)
+
+	rpCtx := page.Context(ctx)
+	wait := rpCtx.MustWaitNavigation()
+	err := rpCtx.Navigate(urlFrontier.Url)
+	if err != nil {
+		log.Error().Err(err).Msg("Error navigating to url")
+		return repository.Extraction{}, err
+	}
+	wait()
+
+	rp := rpCtx.MustWaitStable()
+
+	judgement, err := rp.Element("#divJudgement")
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting judgement")
+		return repository.Extraction{}, err
+	}
+	now := time.Now()
+	var extraction repository.Extraction
+	extraction.ID = urlFrontier.ID
+	extraction.UrlFrontierID = urlFrontier.ID
+	extraction.Language = "en"
+	extraction.CreatedAt = now
+	extraction.UpdatedAt = now
+	siteContent, err := judgement.HTML()
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting site content")
+		return repository.Extraction{}, err
+	}
+	extraction.SiteContent = &siteContent
+	nav, err := rp.Element("nav")
+	if err != nil {
+		log.Error().Err(err).Msg("Error getting nav")
+		return repository.Extraction{}, err
+	}
+	donwloadLink, err := extractPdfUrl(nav)
+	if err != nil {
+		log.Error().Err(err).Msg("Error extracting pdf url")
+		return repository.Extraction{}, err
+	}
+	extraction.Metadata.PdfUrl = donwloadLink
+	hashPage := sha256.Sum256([]byte(*extraction.SiteContent))
+	hashPageString := hex.EncodeToString(hashPage[:])
+	extraction.PageHash = &hashPageString
+
+	content, err := judgement.Element("content")
+	if err != nil {
+		log.Info().Msg("Judgement is old")
+		err = scrapeOldTemplate(ctx, judgement, &extraction, &urlFrontier)
 		if err != nil {
-			log.Error().Err(err).Msg("Error getting html")
-			return false
+			log.Error().Err(err).Msg("Error scraping old template")
+			return repository.Extraction{}, err
 		}
-		md, err := converter.ConvertString(html)
+	} else {
+		err = scrapeNewTemplate(ctx, content, &extraction, &urlFrontier)
 		if err != nil {
-			log.Error().Err(err).Msg("Error converting verdict")
-			return false
+			log.Error().Err(err).Msg("Error scraping new template")
+			return repository.Extraction{}, err
 		}
+	}
+	log.Info().Msgf("Handling pdf for url: %s", urlFrontier.Url)
+	pdfUrl, err := services.HandlePdf(ctx, extraction.ID, extraction.Metadata.PdfUrl)
+	if err != nil {
+		log.Error().Err(err).Msg("Error handling pdf")
+		return repository.Extraction{}, err
+	}
+	log.Info().Msgf("Uploaded pdf for url: %s, to GCS: %s", urlFrontier.Url, pdfUrl.B)
+	log.Info().Msgf("Downloading html for url: %s", urlFrontier.Url)
+	htmlUrl, err := services.HandleHtml(ctx, extraction.ID, urlFrontier.Url)
+	if err != nil {
+		log.Error().Err(err).Msg("Error handling html")
+		return repository.Extraction{}, err
+	}
+	log.Info().Msgf("Uploaded html for url: %s, to GCS: %s", urlFrontier.Url, htmlUrl.B)
 
-		markdownVerdict = append(markdownVerdict, md)
+	extraction.ArtifactLink = &pdfUrl.B
+	extraction.RawPageLink = &htmlUrl.B
+	log.Info().Msgf("Scraped template for url: %s", urlFrontier.Url)
 
-		return true
-	})
+	return extraction, nil
 
-	currentExtraction.Metadata.Verdict = strings.Join(rawVerdict, "\n")
-	currentExtraction.Metadata.VerdictMarkdown = strings.Join(markdownVerdict, "\n")
-
-	return currentExtraction
 }
