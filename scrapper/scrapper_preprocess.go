@@ -29,23 +29,25 @@ func extractTitle(e *rod.Element) (string, error) {
 func extractPdfUrl(e *rod.Element) (string, error) {
 	hrefs, err := e.Elements("a[href]")
 	if err != nil {
-		log.Error().Err(err).Msg("Error getting href")
-		return "", err
+		return "", fmt.Errorf("failed to find href elements: %w", err)
 	}
 
 	for _, href := range hrefs {
 		attr, err := href.Attribute("href")
 		if err != nil {
-			log.Error().Err(err).Msg("Error getting href")
-			return "", err
+			return "", fmt.Errorf("failed to get href attribute: %w", err)
 		}
 		if strings.Contains(*attr, "pdf") {
-			pdfUrl := fmt.Sprintf("https://%s%s", common.CRAWLER_DOMAIN, *attr)
+			// Sanitize the path to prevent path traversal
+			cleanPath := path.Clean(*attr)
+			if strings.HasPrefix(cleanPath, "..") {
+				return "", fmt.Errorf("invalid path: %s", *attr)
+			}
+			pdfUrl := fmt.Sprintf("https://%s%s", common.CRAWLER_DOMAIN, cleanPath)
 			log.Info().Msg("Found PDF: " + pdfUrl)
 			return pdfUrl, nil
 		}
 	}
 
-	return "", errors.New("no pdf url found")
-
+	return "", fmt.Errorf("no pdf url found in element")
 }
