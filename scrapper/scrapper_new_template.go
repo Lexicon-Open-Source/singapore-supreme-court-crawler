@@ -2,6 +2,7 @@ package scrapper
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -15,6 +16,12 @@ import (
 )
 
 func scrapeNewTemplate(ctx context.Context, e *rod.Element, extraction *repository.Extraction, urlFrontier *repository.UrlFrontier) error {
+
+	select {
+	case <-ctx.Done():
+		return errors.New("context canceled")
+	default:
+	}
 	log.Info().Msgf("Scraping new template for url: %s", urlFrontier.Url)
 
 	extraction.Metadata.CitationNumber = urlFrontier.Metadata.CitationNumber

@@ -2,6 +2,7 @@ package scrapper
 
 import (
 	"context"
+	"errors"
 	"lexicon/singapore-supreme-court-crawler/repository"
 	"strings"
 	"time"
@@ -15,6 +16,11 @@ import (
 
 func scrapeOldTemplate(ctx context.Context, e *rod.Element, extraction *repository.Extraction, urlFrontier *repository.UrlFrontier) error {
 
+	select {
+	case <-ctx.Done():
+		return errors.New("context canceled")
+	default:
+	}
 	log.Info().Msgf("Scraping old template for url: %s", urlFrontier.Url)
 	extraction.Metadata.CitationNumber = urlFrontier.Metadata.CitationNumber
 	extraction.Metadata.Numbers = urlFrontier.Metadata.CaseNumbers

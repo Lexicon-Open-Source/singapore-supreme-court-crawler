@@ -15,6 +15,8 @@ func UpsertExtraction(ctx context.Context, extractions []repository.Extraction) 
 		return err
 	}
 
+	defer tx.Rollback(ctx)
+
 	queries := common.Query.WithTx(tx)
 
 	br := queries.UpsertExtraction(ctx, lo.Map(extractions, func(extraction repository.Extraction, _ int) repository.UpsertExtractionParams {
@@ -35,9 +37,13 @@ func UpsertExtraction(ctx context.Context, extractions []repository.Extraction) 
 	br.Exec(func(int, error) {
 		if err != nil {
 			log.Error().Err(err).Msg("Error upserting extractions")
+			return
 		}
 	})
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
 
+	return nil
 }

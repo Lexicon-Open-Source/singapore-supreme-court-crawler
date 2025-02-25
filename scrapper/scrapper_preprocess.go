@@ -1,30 +1,14 @@
 package scrapper
 
 import (
-	"errors"
 	"fmt"
 	"lexicon/singapore-supreme-court-crawler/common"
+	"path"
 	"strings"
 
 	"github.com/go-rod/rod"
 	"github.com/rs/zerolog/log"
 )
-
-func extractTitle(e *rod.Element) (string, error) {
-	title, err := e.Element("h1")
-	if err != nil {
-		log.Error().Err(err).Msg("Error getting title")
-		return "", err
-	}
-
-	text, err := title.Text()
-	if err != nil {
-		log.Error().Err(err).Msg("Error getting title")
-		return "", err
-	}
-
-	return text, nil
-}
 
 func extractPdfUrl(e *rod.Element) (string, error) {
 	hrefs, err := e.Elements("a[href]")

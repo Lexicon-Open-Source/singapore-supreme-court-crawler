@@ -45,7 +45,11 @@ func UpsertUrl(ctx context.Context, urlFrontier []repository.UrlFrontier) error 
 		}
 	})
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func UpdateFrontierStatuses(ctx context.Context, statuses []lo.Tuple2[string, int16]) error {
@@ -73,7 +77,11 @@ func UpdateFrontierStatuses(ctx context.Context, statuses []lo.Tuple2[string, in
 		}
 	})
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func GetUrlFrontierByUrl(ctx context.Context, url string) (repository.UrlFrontier, error) {
